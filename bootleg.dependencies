@@ -1,6 +1,6 @@
 [
  {
-   "remote":	  "github",
+   "remote":      "github",
    "repository":  "LineageOS/android_kernel_huawei_angler",
    "target_path": "kernel/huawei/angler",
    "branch":      "lineage-15.1"
