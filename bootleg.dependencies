@@ -1,0 +1,15 @@
+[
+ {
+   "remote":	  "github",
+   "repository":  "LineageOS/android_kernel_huawei_angler",
+   "target_path": "kernel/huawei/angler",
+   "branch":      "lineage-15.1"
+ },
+
+ {
+   "remote":      "github",
+   "repository":  "TheMuppets/proprietary_vendor_huawei",
+   "target_path": "vendor/huawei",
+   "branch":      "lineage-15.1"
+ }
+]
