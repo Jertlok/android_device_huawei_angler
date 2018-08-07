@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, The Linux Foundataion. All rights reserved.
+/* Copyright (c) 2015, The Linux Foundataion. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are
@@ -26,191 +26,357 @@
 * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *
 */
-
-#include <utils/Errors.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <linux/media.h>
+#include <media/msmb_camera.h>
+#include <media/msm_cam_sensor.h>
 #include <utils/Log.h>
-#include <sys/prctl.h>
-#include "QCameraCmdThread.h"
-
-using namespace android;
-
+#include "HAL3/QCamera3HWI.h"
+#include "QCameraFlash.h"
+#define STRING_LENGTH_OF_64_BIT_NUMBER 21
+volatile uint32_t gCamHal3LogLevel = 1;
 namespace qcamera {
-
 /*===========================================================================
- * FUNCTION   : QCameraCmdThread
+ * FUNCTION   : getInstance
  *
- * DESCRIPTION: default constructor of QCameraCmdThread
+ * DESCRIPTION: Get and create the QCameraFlash singleton.
  *
  * PARAMETERS : None
  *
  * RETURN     : None
  *==========================================================================*/
-QCameraCmdThread::QCameraCmdThread() :
-    cmd_queue()
+QCameraFlash& QCameraFlash::getInstance()
 {
-    cmd_pid = 0;
-    cam_sem_init(&sync_sem, 0);
-    cam_sem_init(&cmd_sem, 0);
+    static QCameraFlash flashInstance;
+    return flashInstance;
 }
-
 /*===========================================================================
- * FUNCTION   : ~QCameraCmdThread
+ * FUNCTION   : QCameraFlash
  *
- * DESCRIPTION: deconstructor of QCameraCmdThread
+ * DESCRIPTION: default constructor of QCameraFlash
  *
  * PARAMETERS : None
  *
  * RETURN     : None
  *==========================================================================*/
-QCameraCmdThread::~QCameraCmdThread()
+QCameraFlash::QCameraFlash() : m_callbacks(NULL)
 {
-    cam_sem_destroy(&sync_sem);
-    cam_sem_destroy(&cmd_sem);
-}
-
-/*===========================================================================
- * FUNCTION   : launch
- *
- * DESCRIPTION: launch Cmd Thread
- *
- * PARAMETERS :
- *   @start_routine : thread routine function ptr
- *   @user_data     : user data ptr
- *
- * RETURN     : int32_t type of status
- *              NO_ERROR  -- success
- *              none-zero failure code
- *==========================================================================*/
-int32_t QCameraCmdThread::launch(void *(*start_routine)(void *),
-                                 void* user_data)
-{
-    /* launch the thread */
-    pthread_create(&cmd_pid,
-                   NULL,
-                   start_routine,
-                   user_data);
-    return NO_ERROR;
-}
-
-/*===========================================================================
- * FUNCTION   : setName
- *
- * DESCRIPTION: name the cmd thread
- *
- * PARAMETERS :
- *   @name : desired name for the thread
- *
- * RETURN     : int32_t type of status
- *              NO_ERROR  -- success
- *              none-zero failure code
- *==========================================================================*/
-int32_t QCameraCmdThread::setName(const char* name)
-{
-    /* name the thread */
-    prctl(PR_SET_NAME, (unsigned long)name, 0, 0, 0);
-    return NO_ERROR;
-}
-
-/*===========================================================================
- * FUNCTION   : sendCmd
- *
- * DESCRIPTION: send a command to the Cmd Thread
- *
- * PARAMETERS :
- *   @cmd     : command to be executed.
- *   @sync_cmd: flag to indicate if this is a synchorinzed cmd. If true, this call
- *              will wait until signal is set after the command is completed.
- *   @priority: flag to indicate if this is a cmd with priority. If true, the cmd
- *              will be enqueued to the head with priority.
- *
- * RETURN     : int32_t type of status
- *              NO_ERROR  -- success
- *              none-zero failure code
- *==========================================================================*/
-int32_t QCameraCmdThread::sendCmd(camera_cmd_type_t cmd, uint8_t sync_cmd, uint8_t priority)
-{
-    camera_cmd_t *node = (camera_cmd_t *)malloc(sizeof(camera_cmd_t));
-    if (NULL == node) {
-        ALOGE("%s: No memory for camera_cmd_t", __func__);
-        return NO_MEMORY;
+    memset(&m_flashOn, 0, sizeof(m_flashOn));
+    memset(&m_cameraOpen, 0, sizeof(m_cameraOpen));
+    for (int pos = 0; pos < MM_CAMERA_MAX_NUM_SENSORS; pos++) {
+        m_flashFds[pos] = -1;
     }
-    memset(node, 0, sizeof(camera_cmd_t));
-    node->cmd = cmd;
-
-    if (priority) {
-        if (!cmd_queue.enqueueWithPriority((void *)node)) {
-            free(node);
-            node = NULL;
-        }
-    } else {
-        if (!cmd_queue.enqueue((void *)node)) {
-            free(node);
-            node = NULL;
-        }
-    }
-    cam_sem_post(&cmd_sem);
-
-    /* if is a sync call, need to wait until it returns */
-    if (sync_cmd) {
-        cam_sem_wait(&sync_sem);
-    }
-    return NO_ERROR;
 }
-
 /*===========================================================================
- * FUNCTION   : getCmd
+ * FUNCTION   : ~QCameraFlash
  *
- * DESCRIPTION: dequeue a cmommand from cmd queue
+ * DESCRIPTION: deconstructor of QCameraFlash
  *
  * PARAMETERS : None
  *
- * RETURN     : cmd dequeued
+ * RETURN     : None
  *==========================================================================*/
-camera_cmd_type_t QCameraCmdThread::getCmd()
+QCameraFlash::~QCameraFlash()
 {
-    camera_cmd_type_t cmd = CAMERA_CMD_TYPE_NONE;
-    camera_cmd_t *node = (camera_cmd_t *)cmd_queue.dequeue();
-    if (NULL == node) {
-        ALOGD("%s: No notify avail", __func__);
-        return CAMERA_CMD_TYPE_NONE;
-    } else {
-        cmd = node->cmd;
-        free(node);
+    for (int pos = 0; pos < MM_CAMERA_MAX_NUM_SENSORS; pos++) {
+        if (m_flashFds[pos] >= 0)
+            {
+                setFlashMode(pos, false);
+                close(m_flashFds[pos]);
+                m_flashFds[pos] = -1;
+            }
     }
-    return cmd;
 }
-
 /*===========================================================================
- * FUNCTION   : exit
+ * FUNCTION   : registerCallbacks
  *
- * DESCRIPTION: exit the CMD thread
+ * DESCRIPTION: provide flash module with reference to callbacks to framework
  *
  * PARAMETERS : None
  *
- * RETURN     : int32_t type of status
- *              NO_ERROR  -- success
- *              none-zero failure code
+ * RETURN     : None
  *==========================================================================*/
-int32_t QCameraCmdThread::exit()
+int32_t QCameraFlash::registerCallbacks(
+        const camera_module_callbacks_t* callbacks)
 {
-    int32_t rc = NO_ERROR;
-
-    if (cmd_pid == 0) {
-        return rc;
-    }
-
-    rc = sendCmd(CAMERA_CMD_TYPE_EXIT, 0, 1);
-    if (NO_ERROR != rc) {
-        ALOGE("%s: Error during exit, rc = %d", __func__, rc);
-        return rc;
-    }
-
-    /* wait until cmd thread exits */
-    if (pthread_join(cmd_pid, NULL) != 0) {
-        ALOGD("%s: pthread dead already\n", __func__);
-    }
-    cmd_pid = 0;
-    return rc;
+    int32_t retVal = 0;
+    m_callbacks = callbacks;
+    return retVal;
 }
-
+/*===========================================================================
+ * FUNCTION   : initFlash
+ *
+ * DESCRIPTION: Reserve and initialize the flash unit associated with a
+ *              given camera id. This function is blocking until the
+ *              operation completes or fails. Each flash unit can be "inited"
+ *              by only one process at a time.
+ *
+ * PARAMETERS :
+ *   @camera_id : Camera id of the flash.
+ *
+ * RETURN     :
+ *   0        : success
+ *   -EBUSY   : The flash unit or the resource needed to turn on the
+ *              the flash is busy, typically because the flash is
+ *              already in use.
+ *   -EINVAL  : No flash present at camera_id.
+ *==========================================================================*/
+int32_t QCameraFlash::initFlash(const int camera_id)
+{
+    int32_t retVal = 0;
+    bool hasFlash = false;
+    char flashNode[QCAMERA_MAX_FILEPATH_LENGTH];
+    char flashPath[QCAMERA_MAX_FILEPATH_LENGTH] = "/dev/";
+    if (camera_id < 0 || camera_id >= MM_CAMERA_MAX_NUM_SENSORS) {
+        ALOGE("%s: Invalid camera id: %d", __func__, camera_id);
+        return -EINVAL;
+    }
+    QCamera3HardwareInterface::getFlashInfo(camera_id,
+            hasFlash,
+            flashNode);
+    strlcat(flashPath,
+            flashNode,
+            sizeof(flashPath));
+    if (!hasFlash) {
+        ALOGE("%s: No flash available for camera id: %d",
+                __func__,
+                camera_id);
+        retVal = -ENOSYS;
+    } else if (m_cameraOpen[camera_id]) {
+        ALOGE("%s: Camera in use for camera id: %d",
+                __func__,
+                camera_id);
+        retVal = -EBUSY;
+    } else if (m_flashFds[camera_id] >= 0) {
+        CDBG("%s: Flash is already inited for camera id: %d",
+                __func__,
+                camera_id);
+    } else {
+        m_flashFds[camera_id] = open(flashPath, O_RDWR | O_NONBLOCK);
+        if (m_flashFds[camera_id] < 0) {
+            ALOGE("%s: Unable to open node '%s'",
+                    __func__,
+                    flashPath);
+            retVal = -EBUSY;
+        } else {
+            struct msm_flash_cfg_data_t cfg;
+            struct msm_flash_init_info_t init_info;
+            memset(&cfg, 0, sizeof(struct msm_flash_cfg_data_t));
+            memset(&init_info, 0, sizeof(struct msm_flash_init_info_t));
+            init_info.flash_driver_type = FLASH_DRIVER_DEFAULT;
+            cfg.cfg.flash_init_info = &init_info;
+            cfg.cfg_type = CFG_FLASH_INIT;
+            retVal = ioctl(m_flashFds[camera_id],
+                    VIDIOC_MSM_FLASH_CFG,
+                    &cfg);
+            if (retVal < 0) {
+                ALOGE("%s: Unable to init flash for camera id: %d",
+                        __func__,
+                        camera_id);
+                close(m_flashFds[camera_id]);
+                m_flashFds[camera_id] = -1;
+            }
+            /* wait for PMIC to init */
+            usleep(5000);
+        }
+    }
+    CDBG("%s: X, retVal = %d", __func__, retVal);
+    return retVal;
+}
+/*===========================================================================
+ * FUNCTION   : setFlashMode
+ *
+ * DESCRIPTION: Turn on or off the flash associated with a given handle.
+ *              This function is blocking until the operation completes or
+ *              fails.
+ *
+ * PARAMETERS :
+ *   @camera_id  : Camera id of the flash
+ *   @on         : Whether to turn flash on (true) or off (false)
+ *
+ * RETURN     :
+ *   0        : success
+ *   -EINVAL  : No camera present at camera_id, or it is not inited.
+ *   -EALREADY: Flash is already in requested state
+ *==========================================================================*/
+int32_t QCameraFlash::setFlashMode(const int camera_id, const bool mode)
+{
+    int32_t retVal = 0;
+    struct msm_flash_cfg_data_t cfg;
+    if (camera_id < 0 || camera_id >= MM_CAMERA_MAX_NUM_SENSORS) {
+        ALOGE("%s: Invalid camera id: %d", __func__, camera_id);
+        retVal = -EINVAL;
+    } else if (mode == m_flashOn[camera_id]) {
+        CDBG("%s: flash %d is already in requested state: %d",
+                __func__,
+                camera_id,
+                mode);
+        retVal = -EALREADY;
+    } else if (m_flashFds[camera_id] < 0) {
+        ALOGE("%s: called for uninited flash: %d", __func__, camera_id);
+        retVal = -EINVAL;
+    }  else {
+        memset(&cfg, 0, sizeof(struct msm_flash_cfg_data_t));
+        for (int i = 0; i < MAX_LED_TRIGGERS; i++)
+            cfg.flash_current[i] = QCAMERA_TORCH_CURRENT_VALUE;
+        cfg.cfg_type = mode ? CFG_FLASH_LOW: CFG_FLASH_OFF;
+        retVal = ioctl(m_flashFds[camera_id],
+                        VIDIOC_MSM_FLASH_CFG,
+                        &cfg);
+        if (retVal < 0)
+            ALOGE("%s: Unable to change flash mode to %d for camera id: %d",
+                    __func__, mode, camera_id);
+        else
+            m_flashOn[camera_id] = mode;
+    }
+    return retVal;
+}
+/*===========================================================================
+ * FUNCTION   : deinitFlash
+ *
+ * DESCRIPTION: Release the flash unit associated with a given camera
+ *              position. This function is blocking until the operation
+ *              completes or fails.
+ *
+ * PARAMETERS :
+ *   @camera_id : Camera id of the flash.
+ *
+ * RETURN     :
+ *   0        : success
+ *   -EINVAL  : No camera present at camera_id or not inited.
+ *==========================================================================*/
+int32_t QCameraFlash::deinitFlash(const int camera_id)
+{
+    int32_t retVal = 0;
+    if (camera_id < 0 || camera_id >= MM_CAMERA_MAX_NUM_SENSORS) {
+        ALOGE("%s: Invalid camera id: %d", __func__, camera_id);
+        retVal = -EINVAL;
+    } else if (m_flashFds[camera_id] < 0) {
+        ALOGE("%s: called deinitFlash for uninited flash", __func__);
+        retVal = -EINVAL;
+    } else {
+        setFlashMode(camera_id, false);
+        struct msm_flash_cfg_data_t cfg;
+        cfg.cfg_type = CFG_FLASH_RELEASE;
+        retVal = ioctl(m_flashFds[camera_id],
+                VIDIOC_MSM_FLASH_CFG,
+                &cfg);
+        if (retVal < 0) {
+            ALOGE("%s: Failed to release flash for camera id: %d",
+                    __func__,
+                    camera_id);
+        }
+        close(m_flashFds[camera_id]);
+        m_flashFds[camera_id] = -1;
+    }
+    return retVal;
+}
+/*===========================================================================
+ * FUNCTION   : reserveFlashForCamera
+ *
+ * DESCRIPTION: Give control of the flash to the camera, and notify
+ *              framework that the flash has become unavailable.
+ *
+ * PARAMETERS :
+ *   @camera_id : Camera id of the flash.
+ *
+ * RETURN     :
+ *   0        : success
+ *   -EINVAL  : No camera present at camera_id or not inited.
+ *   -ENOSYS  : No callback available for torch_mode_status_change.
+ *==========================================================================*/
+int32_t QCameraFlash::reserveFlashForCamera(const int camera_id)
+{
+    int32_t retVal = 0;
+    if (camera_id < 0 || camera_id >= MM_CAMERA_MAX_NUM_SENSORS) {
+        ALOGE("%s: Invalid camera id: %d", __func__, camera_id);
+        retVal = -EINVAL;
+    } else if (m_cameraOpen[camera_id]) {
+        CDBG("%s: Flash already reserved for camera id: %d",
+                __func__,
+                camera_id);
+    } else {
+        if (m_flashOn[camera_id]) {
+            setFlashMode(camera_id, false);
+            deinitFlash(camera_id);
+        }
+        m_cameraOpen[camera_id] = true;
+        bool hasFlash = false;
+        char flashNode[QCAMERA_MAX_FILEPATH_LENGTH];
+        QCamera3HardwareInterface::getFlashInfo(camera_id,
+                hasFlash,
+                flashNode);
+        if (m_callbacks == NULL ||
+                m_callbacks->torch_mode_status_change == NULL) {
+            ALOGE("%s: Callback is not defined!", __func__);
+            retVal = -ENOSYS;
+        } else if (!hasFlash) {
+            CDBG("%s: Suppressing callback "
+                    "because no flash exists for camera id: %d",
+                    __func__,
+                    camera_id);
+        } else {
+            char cameraIdStr[STRING_LENGTH_OF_64_BIT_NUMBER];
+            snprintf(cameraIdStr, STRING_LENGTH_OF_64_BIT_NUMBER,
+                    "%d", camera_id);
+            m_callbacks->torch_mode_status_change(m_callbacks,
+                    cameraIdStr,
+                    TORCH_MODE_STATUS_NOT_AVAILABLE);
+        }
+    }
+    return retVal;
+}
+/*===========================================================================
+ * FUNCTION   : releaseFlashFromCamera
+ *
+ * DESCRIPTION: Release control of the flash from the camera, and notify
+ *              framework that the flash has become available.
+ *
+ * PARAMETERS :
+ *   @camera_id : Camera id of the flash.
+ *
+ * RETURN     :
+ *   0        : success
+ *   -EINVAL  : No camera present at camera_id or not inited.
+ *   -ENOSYS  : No callback available for torch_mode_status_change.
+ *==========================================================================*/
+int32_t QCameraFlash::releaseFlashFromCamera(const int camera_id)
+{
+    int32_t retVal = 0;
+    if (camera_id < 0 || camera_id >= MM_CAMERA_MAX_NUM_SENSORS) {
+        ALOGE("%s: Invalid camera id: %d", __func__, camera_id);
+        retVal = -EINVAL;
+    } else if (!m_cameraOpen[camera_id]) {
+        CDBG("%s: Flash not reserved for camera id: %d",
+                __func__,
+                camera_id);
+    } else {
+        m_cameraOpen[camera_id] = false;
+        bool hasFlash = false;
+        char flashNode[QCAMERA_MAX_FILEPATH_LENGTH];
+        QCamera3HardwareInterface::getFlashInfo(camera_id,
+                hasFlash,
+                flashNode);
+        if (m_callbacks == NULL ||
+                m_callbacks->torch_mode_status_change == NULL) {
+            ALOGE("%s: Callback is not defined!", __func__);
+            retVal = -ENOSYS;
+        } else if (!hasFlash) {
+            CDBG("%s: Suppressing callback "
+                    "because no flash exists for camera id: %d",
+                    __func__,
+                    camera_id);
+        } else {
+            char cameraIdStr[STRING_LENGTH_OF_64_BIT_NUMBER];
+            snprintf(cameraIdStr, STRING_LENGTH_OF_64_BIT_NUMBER,
+                    "%d", camera_id);
+            m_callbacks->torch_mode_status_change(m_callbacks,
+                    cameraIdStr,
+                    TORCH_MODE_STATUS_AVAILABLE_OFF);
+        }
+    }
+    return retVal;
+}
 }; // namespace qcamera
+
