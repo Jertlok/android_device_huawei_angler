@@ -23,30 +23,30 @@
 TARGET_USES_CHINOOK_SENSORHUB := false
 
 PRODUCT_COPY_FILES += \
-    device/huawei/angler/init.angler.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/hw/init.angler.rc \
-    device/huawei/angler/init.angler.usb.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/hw/init.angler.usb.rc \
-    device/huawei/angler/fstab.angler:$(TARGET_COPY_OUT_VENDOR)/etc/fstab.angler \
-    device/huawei/angler/ueventd.angler.rc:$(TARGET_COPY_OUT_VENDOR)/ueventd.angler.rc \
+    device/huawei/angler/init.angler.rc:root/init.angler.rc \
+    device/huawei/angler/init.angler.usb.rc:root/init.angler.usb.rc \
+    device/huawei/angler/fstab.angler:root/fstab.angler \
+    device/huawei/angler/ueventd.angler.rc:root/ueventd.angler.rc \
     device/huawei/angler/init.recovery.angler.rc:root/init.recovery.angler.rc \
-    device/huawei/angler/init.angler.power.sh:$(TARGET_COPY_OUT_VENDOR)/bin/init.angler.power.sh \
+    device/huawei/angler/init.angler.power.sh:system/bin/init.angler.power.sh \
     device/huawei/angler/uinput-fpc.kl:system/usr/keylayout/uinput-fpc.kl \
     device/huawei/angler/uinput-fpc.idc:system/usr/idc/uinput-fpc.idc \
-    device/huawei/angler/init.qcom.devwait.sh:$(TARGET_COPY_OUT_VENDOR)/bin/init.qcom.devwait.sh \
-    device/huawei/angler/init.qcom.devstart.sh:$(TARGET_COPY_OUT_VENDOR)/bin/init.qcom.devstart.sh
+    device/huawei/angler/init.qcom.devwait.sh:system/bin/init.qcom.devwait.sh \
+    device/huawei/angler/init.qcom.devstart.sh:system/bin/init.qcom.devstart.sh
 
 ifeq ($(TARGET_USES_CHINOOK_SENSORHUB),true)
 PRODUCT_COPY_FILES += \
-    device/huawei/angler/init.angler.sensorhub.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/init.angler.sensorhub.rc
+    device/huawei/angler/init.angler.sensorhub.rc:root/init.angler.sensorhub.rc
 else
 PRODUCT_COPY_FILES += \
-    device/huawei/angler/init.angler.nanohub.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/init.angler.sensorhub.rc
+    device/huawei/angler/init.angler.nanohub.rc:root/init.angler.sensorhub.rc
 endif
 
 PRODUCT_COPY_FILES += \
-    device/huawei/angler/init.mcfg.sh:$(TARGET_COPY_OUT_VENDOR)/bin/init.mcfg.sh
+    device/huawei/angler/init.mcfg.sh:system/bin/init.mcfg.sh
 
 PRODUCT_COPY_FILES += \
-    device/huawei/angler/init.radio.sh:$(TARGET_COPY_OUT_VENDOR)/bin/init.radio.sh
+    device/huawei/angler/init.radio.sh:system/bin/init.radio.sh
 
 # Thermal configuration
 PRODUCT_COPY_FILES += \
