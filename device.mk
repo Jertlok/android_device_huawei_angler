@@ -290,6 +290,7 @@ PRODUCT_PACKAGES += \
 
 PRODUCT_PACKAGES += \
     android.hardware.wifi@1.0-service \
+    android.hardware.wifi@1.0-impl \
     libwpa_client \
     hostapd \
     wlutil \
