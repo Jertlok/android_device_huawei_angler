@@ -564,9 +564,9 @@ $(call inherit-product-if-exists, hardware/broadcom/wlan/bcmdhd/firmware/bcm4358
 PRODUCT_COPY_FILES += \
     device/huawei/angler/gps.conf:system/etc/gps.conf:qcom
 
-# Vendor patch level 
-PRODUCT_PROPERTY_OVERRIDES += \
-    ro.vendor.patch.level=OPM6.171019.030.B1
+# for everything
+PRODUCT_PACKAGES += \
+    libtinyxml2
 
 # b/29995499
 $(call add-product-sanitizer-module-config,cameraserver,never)
