@@ -19,16 +19,16 @@
 
 # Inherit from the common product configuration
 $(call inherit-product, device/huawei/angler/aosp_angler.mk)
+$(call inherit-product, $(SRC_TARGET_DIR)/product/aosp_base_telephony.mk)
 
-# Inherit statix's custom configurations
-$(call inherit-product, $(TOPDIR)vendor/statix/config/common.mk)
-$(call inherit-product, $(TOPDIR)vendor/statix/config/gsm.mk)
+# Inherit DU custom configurations
+$(call inherit-product, vendor/du/config/common_full_phone.mk)
 
 # Screen Resolution for the Bootanimation
 TARGET_SCREEN_HEIGHT := 2560
 TARGET_SCREEN_WIDTH := 1440
 
-PRODUCT_NAME := statix_angler
+PRODUCT_NAME := du_angler
 PRODUCT_DEVICE := angler
 PRODUCT_BRAND := google
 PRODUCT_MODEL := Nexus 6P
